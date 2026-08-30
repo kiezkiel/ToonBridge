@@ -95,10 +95,20 @@ class ToonBridgeImporter:
             if imported_asset:
                 tex_obj = unreal.EditorAssetLibrary.load_asset(imported_asset[0])
                 if "LUT" in asset_name and tex_obj:
-                    # Configure LUT Texture settings (Clamp addressing, LinearColor)
-                    tex_obj.set_editor_property("address_x", unreal.TextureAddress.TA_CLAMP)
-                    tex_obj.set_editor_property("address_y", unreal.TextureAddress.TA_CLAMP)
-                    tex_obj.set_editor_property("s_rgb", False)
+                    # Configure LUT Texture settings (Clamp addressing, LinearColor / non-SRGB)
+                    try:
+                        tex_obj.set_editor_property("srgb", False)
+                    except Exception:
+                        try:
+                            tex_obj.set_editor_property("s_rgb", False)
+                        except Exception:
+                            pass
+
+                    try:
+                        tex_obj.set_editor_property("address_x", unreal.TextureAddress.TA_CLAMP)
+                        tex_obj.set_editor_property("address_y", unreal.TextureAddress.TA_CLAMP)
+                    except Exception:
+                        pass
                 texture_assets[node_id] = tex_obj
 
         return texture_assets

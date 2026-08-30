@@ -86,7 +86,13 @@ class ToonBridgeCelBuilder:
             )
             if lut_sample:
                 lut_sample.set_editor_property("texture", lut_texture_asset)
-                lut_sample.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+                try:
+                    lut_sample.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+                except Exception:
+                    try:
+                        lut_sample.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_COLOR)
+                    except Exception:
+                        pass
                 unreal.MaterialEditingLibrary.connect_material_expressions(append_uv, "", lut_sample, "UVs")
 
             return lut_sample

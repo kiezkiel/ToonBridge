@@ -1,6 +1,6 @@
 """
 ToonBridge Unreal Plugin Initialization
-Registers Editor Menu entries and Toolbar buttons.
+Registers Editor Menu entries and Toolbar buttons across all UE5 versions (5.0 - 5.8+).
 """
 
 import os
@@ -28,10 +28,7 @@ def register_toonbridge_menus():
         # 1. Add to the standard "Tools" Menu
         tools_menu = menus.find_menu("LevelEditor.MainMenu.Tools")
         if tools_menu:
-            entry = unreal.ToolMenuEntry(
-                name="ToonBridge.ToolsImport",
-                type=unreal.MultiBoxType.MENU_ENTRY
-            )
+            entry = unreal.ToolMenuEntry(name="ToonBridge.ToolsImport")
             entry.set_label("ToonBridge: Import .toonbridge Package")
             entry.set_tool_tip("Import and reconstruct Blender stylized shader in Unreal Engine 5")
             entry.set_string_command(
@@ -51,10 +48,7 @@ def register_toonbridge_menus():
                 "ToonBridge"
             )
             if sub_menu:
-                sub_entry = unreal.ToolMenuEntry(
-                    name="ToonBridge.MainMenuImport",
-                    type=unreal.MultiBoxType.MENU_ENTRY
-                )
+                sub_entry = unreal.ToolMenuEntry(name="ToonBridge.MainMenuImport")
                 sub_entry.set_label("Import .toonbridge Package")
                 sub_entry.set_tool_tip("Import and reconstruct Blender stylized shader in Unreal Engine 5")
                 sub_entry.set_string_command(
@@ -70,10 +64,7 @@ def register_toonbridge_menus():
             toolbar = menus.find_menu("LevelEditor.LevelEditorToolBar")
 
         if toolbar:
-            tb_entry = unreal.ToolMenuEntry(
-                name="ToonBridge.ToolbarImport",
-                type=unreal.MultiBoxType.TOOL_BAR_BUTTON
-            )
+            tb_entry = unreal.ToolMenuEntry(name="ToonBridge.ToolbarImport")
             tb_entry.set_label("ToonBridge Import")
             tb_entry.set_tool_tip("Import Blender .toonbridge Package")
             tb_entry.set_string_command(
