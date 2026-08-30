@@ -1,0 +1,177 @@
+{
+  "version": "1.0.0",
+  "material_name": "M_Stylized_GhibliGrass",
+  "output_node_id": "Material Output",
+  "nodes": {
+    "Material Output": {
+      "id": "Material Output",
+      "label": "Material Output",
+      "blender_type": "ShaderNodeOutputMaterial",
+      "ir_type": "MATERIAL_OUTPUT",
+      "location": [600.0, 0.0],
+      "inputs": [{"index": 0, "name": "Surface", "type": "SHADER", "default_value": null}],
+      "outputs": [],
+      "attributes": {}
+    },
+    "RootTip_Mix": {
+      "id": "RootTip_Mix",
+      "label": "Root Tip Color Mix",
+      "blender_type": "ShaderNodeMix",
+      "ir_type": "MIX",
+      "location": [200.0, 100.0],
+      "inputs": [
+        {"index": 0, "name": "Factor", "type": "VALUE", "default_value": 0.5},
+        {"index": 1, "name": "A", "type": "RGBA", "default_value": [0.03, 0.22, 0.08, 1.0]},
+        {"index": 2, "name": "B", "type": "RGBA", "default_value": [0.55, 0.78, 0.12, 1.0]}
+      ],
+      "outputs": [{"index": 0, "name": "Result", "type": "RGBA"}],
+      "attributes": {"data_type": "RGBA", "blend_type": "MIX", "clamp_result": true}
+    },
+    "TexCoord": {
+      "id": "TexCoord",
+      "label": "Texture Coordinate",
+      "blender_type": "ShaderNodeTexCoord",
+      "ir_type": "TEXTURE_COORDINATE",
+      "location": [-600.0, 200.0],
+      "inputs": [],
+      "outputs": [{"index": 2, "name": "UV", "type": "VECTOR"}],
+      "attributes": {}
+    },
+    "Separate_UV": {
+      "id": "Separate_UV",
+      "label": "Separate UV",
+      "blender_type": "ShaderNodeSeparateXYZ",
+      "ir_type": "SEPARATE_CHANNELS",
+      "location": [-400.0, 200.0],
+      "inputs": [{"index": 0, "name": "Vector", "type": "VECTOR", "default_value": [0.0, 0.0, 0.0]}],
+      "outputs": [
+        {"index": 0, "name": "X", "type": "VALUE"},
+        {"index": 1, "name": "Y", "type": "VALUE"},
+        {"index": 2, "name": "Z", "type": "VALUE"}
+      ],
+      "attributes": {}
+    },
+    "Grass_Cel_Ramp": {
+      "id": "Grass_Cel_Ramp",
+      "label": "Cel Shadow Ramp",
+      "blender_type": "ShaderNodeValToRGB",
+      "ir_type": "COLOR_RAMP",
+      "location": [0.0, -150.0],
+      "inputs": [{"index": 0, "name": "Fac", "type": "VALUE", "default_value": 0.5}],
+      "outputs": [
+        {"index": 0, "name": "Color", "type": "RGBA"},
+        {"index": 1, "name": "Alpha", "type": "VALUE"}
+      ],
+      "attributes": {
+        "color_ramp": {
+          "interpolation": "CONSTANT",
+          "stops": [
+            {"position": 0.0, "color": [0.15, 0.25, 0.45, 1.0]},
+            {"position": 0.45, "color": [1.0, 1.0, 1.0, 1.0]}
+          ],
+          "total_stops": 2
+        }
+      }
+    },
+    "Shader2RGB_Node": {
+      "id": "Shader2RGB_Node",
+      "label": "Shader to RGB",
+      "blender_type": "ShaderNodeShaderToRGB",
+      "ir_type": "SHADER_TO_RGB",
+      "location": [-200.0, -150.0],
+      "inputs": [{"index": 0, "name": "Shader", "type": "SHADER", "default_value": null}],
+      "outputs": [{"index": 0, "name": "Color", "type": "RGBA"}],
+      "attributes": {}
+    },
+    "Final_Color_Multiply": {
+      "id": "Final_Color_Multiply",
+      "label": "Multiply Cel Shadow",
+      "blender_type": "ShaderNodeMath",
+      "ir_type": "MATH",
+      "location": [400.0, 0.0],
+      "inputs": [
+        {"index": 0, "name": "Value1", "type": "RGBA", "default_value": null},
+        {"index": 1, "name": "Value2", "type": "RGBA", "default_value": null}
+      ],
+      "outputs": [{"index": 0, "name": "Value", "type": "RGBA"}],
+      "attributes": {"operation": "MULTIPLY", "use_clamp": true}
+    }
+  },
+  "connections": [
+    {
+      "from_node": "TexCoord",
+      "from_socket": "UV",
+      "from_socket_index": 2,
+      "to_node": "Separate_UV",
+      "to_socket": "Vector",
+      "to_socket_index": 0
+    },
+    {
+      "from_node": "Separate_UV",
+      "from_socket": "Y",
+      "from_socket_index": 1,
+      "to_node": "RootTip_Mix",
+      "to_socket": "Factor",
+      "to_socket_index": 0
+    },
+    {
+      "from_node": "Shader2RGB_Node",
+      "from_socket": "Color",
+      "from_socket_index": 0,
+      "to_node": "Grass_Cel_Ramp",
+      "to_socket": "Fac",
+      "to_socket_index": 0
+    },
+    {
+      "from_node": "RootTip_Mix",
+      "from_socket": "Result",
+      "from_socket_index": 0,
+      "to_node": "Final_Color_Multiply",
+      "to_socket": "Value1",
+      "to_socket_index": 0
+    },
+    {
+      "from_node": "Grass_Cel_Ramp",
+      "from_socket": "Color",
+      "from_socket_index": 0,
+      "to_node": "Final_Color_Multiply",
+      "to_socket": "Value2",
+      "to_socket_index": 1
+    },
+    {
+      "from_node": "Final_Color_Multiply",
+      "from_socket": "Value",
+      "from_socket_index": 0,
+      "to_node": "Material Output",
+      "to_socket": "Surface",
+      "to_socket_index": 0
+    }
+  ],
+  "cel_chains": [
+    {
+      "shader_to_rgb_node": "Shader2RGB_Node",
+      "downstream_color_ramps": ["Grass_Cel_Ramp"],
+      "type": "EEVEE_CEL_SHADING"
+    }
+  ],
+  "color_ramps": [
+    {
+      "node_id": "Grass_Cel_Ramp",
+      "data": {
+        "interpolation": "CONSTANT",
+        "stops": [
+          {"position": 0.0, "color": [0.15, 0.25, 0.45, 1.0]},
+          {"position": 0.45, "color": [1.0, 1.0, 1.0, 1.0]}
+        ],
+        "total_stops": 2
+      },
+      "cel_steps": [
+        {"step_index": 0, "threshold": 0.0, "color_rgba": [0.15, 0.25, 0.45, 1.0]},
+        {"step_index": 1, "threshold": 0.45, "color_rgba": [1.0, 1.0, 1.0, 1.0]}
+      ]
+    }
+  ],
+  "procedural_nodes": [],
+  "baked_textures": [],
+  "lut_textures": []
+}
