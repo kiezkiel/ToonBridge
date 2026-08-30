@@ -19,7 +19,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from toonbridge_importer import ToonBridgeImporter
+try:
+    from .toonbridge_importer import ToonBridgeImporter
+except (ImportError, ValueError):
+    from toonbridge_importer import ToonBridgeImporter
 
 
 class OPENFILENAME(ctypes.Structure):
