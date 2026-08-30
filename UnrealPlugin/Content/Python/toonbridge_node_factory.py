@@ -81,6 +81,13 @@ class ToonBridgeNodeFactory:
         elif ir_type in ("MIX", "MIX_SHADER"):
             # Linear Interpolation (Lerp)
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
+            # Apply default factor if specified
+            fac_val = attrs.get("default_factor")
+            if fac_val is not None and expr:
+                try:
+                    expr.set_editor_property("const_alpha", float(fac_val))
+                except Exception:
+                    pass
 
         elif ir_type == "SHADER_TO_RGB":
             # Real-time Cel-Lighting calculation (N dot L)
@@ -157,7 +164,7 @@ class ToonBridgeNodeFactory:
         elif ir_type == "TEXTURE_COORDINATE":
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, node_x, node_y)
 
-        elif ir_type in ("TEXTURE_SAMPLE", "PROCEDURAL_NOISE"):
+        elif ir_type in ("TEXTURE_SAMPLE", "PROCEDURAL_NOISE", "GROUP_NODE"):
             node_id = node_info.get("id")
             clean_id = node_id.replace(" ", "_").replace(".", "_") if node_id else ""
             tex_asset = None
@@ -171,6 +178,20 @@ class ToonBridgeNodeFactory:
                 expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureSample, node_x, node_y)
                 if expr:
                     expr.set_editor_property("texture", tex_asset)
+            elif ir_type in ("PROCEDURAL_NOISE", "GROUP_NODE"):
+                # Generate real-time procedural painterly noise in Unreal Engine!
+                expr = unreal.MaterialEditingLibrary.create_material_expression(
+                    material, unreal.MaterialExpressionNoise, node_x, node_y
+                )
+                if expr:
+                    try:
+                        expr.set_editor_property("scale", 0.05)
+                        expr.set_editor_property("levels", 3)
+                        expr.set_editor_property("output_min", 0.0)
+                        expr.set_editor_property("output_max", 1.0)
+                        expr.set_editor_property("quality", 2)
+                    except Exception:
+                        pass
             else:
                 expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionConstant3Vector, node_x, node_y)
                 if expr:

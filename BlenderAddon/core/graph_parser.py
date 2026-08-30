@@ -189,12 +189,18 @@ class ToonBridgeGraphParser:
             node_info["attributes"]["data_type"] = getattr(node, 'data_type', 'RGBA')
             node_info["attributes"]["blend_type"] = getattr(node, 'blend_type', 'MIX')
             node_info["attributes"]["clamp_result"] = getattr(node, 'clamp_result', False)
+            fac_input = node.inputs.get('Factor') or node.inputs.get('Fac') or (node.inputs[0] if len(node.inputs) > 0 else None)
+            if fac_input and hasattr(fac_input, 'default_value') and isinstance(fac_input.default_value, (int, float)):
+                node_info["attributes"]["default_factor"] = float(fac_input.default_value)
 
         elif bl_type == 'ShaderNodeMixRGB':
             node_info["ir_type"] = "MIX"
             node_info["attributes"]["data_type"] = 'RGBA'
             node_info["attributes"]["blend_type"] = getattr(node, 'blend_type', 'MIX')
             node_info["attributes"]["use_clamp"] = getattr(node, 'use_clamp', False)
+            fac_input = node.inputs.get('Fac') or node.inputs.get('Factor') or (node.inputs[0] if len(node.inputs) > 0 else None)
+            if fac_input and hasattr(fac_input, 'default_value') and isinstance(fac_input.default_value, (int, float)):
+                node_info["attributes"]["default_factor"] = float(fac_input.default_value)
 
         elif bl_type == 'ShaderNodeMixShader':
             node_info["ir_type"] = "MIX_SHADER"
