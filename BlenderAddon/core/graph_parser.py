@@ -1,6 +1,7 @@
 """
 ToonBridge Graph Parser
 Serializes Blender ShaderNodeTree into a clean, platform-agnostic Intermediate Representation (IR).
+Supports Blender 3.6 LTS, 4.0, 4.1, 4.2+.
 """
 
 from typing import Dict, Any, List, Optional, Tuple
@@ -144,7 +145,6 @@ class ToonBridgeGraphParser:
         for node in nodes:
             if node.bl_idname == 'ShaderNodeOutputMaterial' and getattr(node, 'is_active_output', True):
                 return node
-        # Fallback to any output node
         for node in nodes:
             if node.bl_idname == 'ShaderNodeOutputMaterial':
                 return node
@@ -191,6 +191,9 @@ class ToonBridgeGraphParser:
             node_info["attributes"]["blend_type"] = getattr(node, 'blend_type', 'MIX')
             node_info["attributes"]["use_clamp"] = getattr(node, 'use_clamp', False)
 
+        elif bl_type == 'ShaderNodeMixShader':
+            node_info["ir_type"] = "MIX_SHADER"
+
         elif bl_type == 'ShaderNodeMapRange':
             node_info["ir_type"] = "MAP_RANGE"
             node_info["attributes"]["interpolation_type"] = getattr(node, 'interpolation_type', 'LINEAR')
@@ -205,6 +208,12 @@ class ToonBridgeGraphParser:
         elif bl_type == 'ShaderNodeShaderToRGB':
             node_info["ir_type"] = "SHADER_TO_RGB"
 
+        elif bl_type == 'ShaderNodeFresnel':
+            node_info["ir_type"] = "FRESNEL"
+
+        elif bl_type in ('ShaderNodeNewGeometry', 'ShaderNodeGeometry'):
+            node_info["ir_type"] = "GEOMETRY"
+
         elif bl_type in self.PROCEDURAL_TYPES:
             node_info["ir_type"] = "PROCEDURAL_NOISE"
             node_info["attributes"]["noise_subtype"] = bl_type
@@ -215,7 +224,6 @@ class ToonBridgeGraphParser:
             image = getattr(node, 'image', None)
             node_info["attributes"]["image_name"] = image.name if image else ""
             node_info["attributes"]["filepath"] = image.filepath if image else ""
-            node_info["attributes"]["color_space"] = getattr(image, 'colorspace_settings', None).name if image and hasattr(image, 'colorspace_settings') else 'sRGB'
 
         elif bl_type == 'ShaderNodeTexCoord':
             node_info["ir_type"] = "TEXTURE_COORDINATE"
@@ -253,8 +261,14 @@ class ToonBridgeGraphParser:
         elif bl_type == 'ShaderNodeBsdfPrincipled':
             node_info["ir_type"] = "BSDF_PRINCIPLED"
 
+        elif bl_type == 'ShaderNodeBsdfTransparent':
+            node_info["ir_type"] = "BSDF_TRANSPARENT"
+
         elif bl_type == 'ShaderNodeEmission':
             node_info["ir_type"] = "EMISSION"
+
+        elif bl_type == 'ShaderNodeGroup':
+            node_info["ir_type"] = "GROUP_NODE"
 
         elif bl_type == 'ShaderNodeOutputMaterial':
             node_info["ir_type"] = "MATERIAL_OUTPUT"
@@ -309,23 +323,36 @@ class ToonBridgeGraphParser:
         }
 
     def _detect_stylized_chains(self):
-        """Identifies patterns like [Diffuse BSDF] -> [Shader to RGB] -> [ColorRamp] (Cel-Shading)."""
+        """Identifies downstream ColorRamp nodes affected by Shader to RGB (directly or through Math/Mix)."""
         shader_to_rgb_nodes = [
             nid for nid, n in self.parsed_nodes.items()
             if n.get("ir_type") == "SHADER_TO_RGB"
         ]
 
+        visited = set()
         for s2rgb_id in shader_to_rgb_nodes:
-            # Find downstream ColorRamp
             downstream_ramps = []
-            for conn in self.connections:
-                if conn["from_node"] == s2rgb_id:
-                    target = self.parsed_nodes.get(conn["to_node"])
-                    if target and target.get("ir_type") == "COLOR_RAMP":
-                        downstream_ramps.append(target)
+            queue = [s2rgb_id]
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
 
-            self.cel_shading_chains.append({
-                "shader_to_rgb_node": s2rgb_id,
-                "downstream_color_ramps": [r["id"] for r in downstream_ramps],
-                "type": "EEVEE_CEL_SHADING",
-            })
+                for conn in self.connections:
+                    if conn["from_node"] == current:
+                        target_id = conn["to_node"]
+                        target_node = self.parsed_nodes.get(target_id)
+                        if not target_node:
+                            continue
+                        if target_node.get("ir_type") == "COLOR_RAMP":
+                            downstream_ramps.append(target_id)
+                        elif target_node.get("ir_type") in ("MATH", "VECTOR_MATH", "MIX", "MAP_RANGE"):
+                            queue.append(target_id)
+
+            if downstream_ramps:
+                self.cel_shading_chains.append({
+                    "shader_to_rgb_node": s2rgb_id,
+                    "downstream_color_ramps": list(set(downstream_ramps)),
+                    "type": "EEVEE_CEL_SHADING",
+                })

@@ -128,6 +128,9 @@ class ToonBridgeImporter:
                         pass
 
                 texture_assets[node_id] = tex_obj
+                clean_key = node_id.replace(" ", "_").replace(".", "_")
+                texture_assets[clean_key] = tex_obj
+                texture_assets[sanitize_unreal_name(node_id)] = tex_obj
 
         return texture_assets
 
@@ -253,10 +256,11 @@ class ToonBridgeImporter:
             if to_id in pkg.nodes and pkg.nodes[to_id].get("ir_type") == "COLOR_RAMP":
                 continue
 
+            to_sock_idx = conn.get("to_socket_index", 0)
             from_expr = created_expressions.get(from_id)
             to_expr = created_expressions.get(to_id)
             if from_expr and to_expr:
-                ToonBridgeNodeFactory.connect_pins(from_expr, from_sock, to_expr, to_sock)
+                ToonBridgeNodeFactory.connect_pins(from_expr, from_sock, to_expr, to_sock, to_sock_idx)
 
         # 5. Connect terminal output to Base Color
         terminal_expr = self._resolve_terminal_expression(output_node_id, pkg.connections, created_expressions)

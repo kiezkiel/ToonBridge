@@ -78,7 +78,7 @@ class ToonBridgeNodeFactory:
             else:
                 expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionDotProduct, node_x, node_y)
 
-        elif ir_type == "MIX":
+        elif ir_type in ("MIX", "MIX_SHADER"):
             # Linear Interpolation (Lerp)
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
 
@@ -86,8 +86,20 @@ class ToonBridgeNodeFactory:
             # Map Range linear fallback
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
 
+        elif ir_type == "FRESNEL":
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionFresnel, node_x, node_y)
+            if expr:
+                expr.set_editor_property("exponent", 3.0)
+
+        elif ir_type == "GEOMETRY":
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionPixelNormalWS, node_x, node_y)
+
+        elif ir_type == "BSDF_TRANSPARENT":
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionConstant, node_x, node_y)
+            if expr:
+                expr.set_editor_property("r", 0.0)
+
         elif ir_type == "SEPARATE_CHANNELS":
-            # Component mask for channel separation (Default to G/Y for vertical gradient if sampling Y)
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionComponentMask, node_x, node_y)
             if expr:
                 expr.set_editor_property("r", False)
@@ -118,12 +130,21 @@ class ToonBridgeNodeFactory:
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, node_x, node_y)
 
         elif ir_type in ("TEXTURE_SAMPLE", "PROCEDURAL_NOISE"):
-            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureSample, node_x, node_y)
-            if expr and imported_textures:
-                node_id = node_info.get("id")
-                tex_asset = imported_textures.get(node_id)
-                if tex_asset:
+            node_id = node_info.get("id")
+            clean_id = node_id.replace(" ", "_").replace(".", "_") if node_id else ""
+            tex_asset = None
+            if imported_textures:
+                tex_asset = imported_textures.get(node_id) or imported_textures.get(clean_id)
+
+            if tex_asset:
+                expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureSample, node_x, node_y)
+                if expr:
                     expr.set_editor_property("texture", tex_asset)
+            else:
+                # Safe fallback: create Constant3Vector instead of an unassigned broken TextureSample
+                expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionConstant3Vector, node_x, node_y)
+                if expr:
+                    expr.set_editor_property("constant", unreal.LinearColor(0.8, 0.8, 0.8, 1.0))
 
         elif ir_type == "CLAMP":
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionClamp, node_x, node_y)
@@ -134,7 +155,7 @@ class ToonBridgeNodeFactory:
         return expr
 
     @staticmethod
-    def connect_pins(from_expr, from_output_name: str, to_expr, to_input_name: str) -> bool:
+    def connect_pins(from_expr, from_output_name: str, to_expr, to_input_name: str, socket_index: int = 0) -> bool:
         """Connects output of from_expr to input of to_expr in Unreal."""
         if not unreal or not from_expr or not to_expr:
             return False
@@ -153,12 +174,15 @@ class ToonBridgeNodeFactory:
 
             # Match input socket
             in_pin = ""
-            if to_input_name in ("A", "Value1", "Vector1", "Base", "Input", "Vector"):
-                in_pin = "A"
-            elif to_input_name in ("B", "Value2", "Vector2", "Exp"):
-                in_pin = "B"
-            elif to_input_name in ("Alpha", "Fac", "Factor"):
+            if to_input_name in ("Alpha", "Fac", "Factor"):
                 in_pin = "Alpha"
+            elif to_input_name in ("A", "Value1", "Vector1", "Base", "Color1", "Input"):
+                in_pin = "A"
+            elif to_input_name in ("B", "Value2", "Vector2", "Exp", "Color2"):
+                in_pin = "B"
+            elif to_input_name == "Shader":
+                # For Mix Shader: index 1 is Shader A, index 2 is Shader B
+                in_pin = "B" if socket_index >= 2 else "A"
             elif to_input_name in ("UVs", "Coordinates"):
                 in_pin = "UVs"
 
@@ -166,5 +190,5 @@ class ToonBridgeNodeFactory:
                 from_expr, out_pin, to_expr, in_pin
             )
             return True
-        except Exception as e:
+        except Exception:
             return False

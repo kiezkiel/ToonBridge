@@ -52,21 +52,15 @@ class ToonBridgeExporter:
                 ramp_data = ramp_entry["data"]
                 stops = ramp_data.get("stops", [])
 
-                # Determine if we generate a 1D LUT
-                need_lut = (
-                    cel_mode == 'LUT_TEXTURE'
-                    or (cel_mode == 'HYBRID' and (len(stops) > 4 or ramp_data.get("interpolation") != 'CONSTANT'))
-                )
-
-                if need_lut:
-                    lut_filename = f"T_LUT_{material.name}_{node_id}.png".replace(" ", "_")
-                    lut_filepath = os.path.join(textures_dir, lut_filename)
-                    ColorRampParser.save_lut_png(ramp_data, lut_filepath, width=256)
-                    lut_references.append({
-                        "node_id": node_id,
-                        "filename": lut_filename,
-                        "relative_path": f"Textures/{lut_filename}",
-                    })
+                # Always generate clean 1D LUT texture for exact color fidelity
+                lut_filename = f"T_LUT_{material.name}_{node_id}.png".replace(" ", "_")
+                lut_filepath = os.path.join(textures_dir, lut_filename)
+                ColorRampParser.save_lut_png(ramp_data, lut_filepath, width=256)
+                lut_references.append({
+                    "node_id": node_id,
+                    "filename": lut_filename,
+                    "relative_path": f"Textures/{lut_filename}",
+                })
 
                 # Also store mathematical steps
                 ramp_entry["cel_steps"] = ColorRampParser.extract_cel_step_parameters(ramp_data)
