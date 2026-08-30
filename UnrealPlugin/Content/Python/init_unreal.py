@@ -3,7 +3,14 @@ ToonBridge Unreal Plugin Initialization
 Registers Editor Menu entries and initializes the Python Bridge.
 """
 
+import os
+import sys
 import unreal
+
+# Ensure plugin Python directory is in sys.path
+plugin_python_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+if plugin_python_dir not in sys.path:
+    sys.path.insert(0, plugin_python_dir)
 
 
 def register_toonbridge_menus():
@@ -28,10 +35,17 @@ def register_toonbridge_menus():
         )
         entry.set_label("Import .toonbridge Package")
         entry.set_tool_tip("Import and reconstruct Blender stylized shader in Unreal Engine 5")
+        
+        command_str = (
+            f"import sys, os; "
+            f"p = r'{plugin_python_dir}'; "
+            f"sys.path.insert(0, p) if p not in sys.path else None; "
+            f"import toonbridge_gui; toonbridge_gui.open_import_dialog()"
+        )
         entry.set_string_command(
             unreal.ToolMenuStringCommandType.PYTHON,
             "",
-            string="import toonbridge_gui; toonbridge_gui.open_import_dialog()"
+            string=command_str
         )
 
         toonbridge_menu.add_menu_entry("ToonBridgeOps", entry)
