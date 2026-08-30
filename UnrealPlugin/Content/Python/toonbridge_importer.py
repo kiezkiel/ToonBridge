@@ -181,16 +181,24 @@ class ToonBridgeImporter:
         mat_name = f"M_{clean_mat_name}"
         asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 
-        # Create Material Asset
-        material = asset_tools.create_asset(
-            mat_name,
-            self.material_path,
-            unreal.Material,
-            unreal.MaterialFactoryNew()
-        )
+        mat_asset_path = f"{self.material_path}/{mat_name}"
+        if unreal.EditorAssetLibrary.does_asset_exist(mat_asset_path):
+            material = unreal.EditorAssetLibrary.load_asset(mat_asset_path)
+            try:
+                unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
+            except Exception:
+                pass
+            unreal.log(f"[ToonBridge] Updating existing material in place: {mat_asset_path}")
+        else:
+            material = asset_tools.create_asset(
+                mat_name,
+                self.material_path,
+                unreal.Material,
+                unreal.MaterialFactoryNew()
+            )
 
         if not material:
-            unreal.log_error(f"[ToonBridge] Could not create material asset: {mat_name}")
+            unreal.log_error(f"[ToonBridge] Could not create or load material asset: {mat_name}")
             return None
 
         created_expressions: Dict[str, Any] = {}
