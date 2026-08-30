@@ -4,6 +4,7 @@ Main orchestrator for importing .toonbridge packages into Unreal Engine 5.
 """
 
 import os
+import re
 from typing import Dict, Any, Optional
 
 try:
@@ -19,6 +20,13 @@ except (ImportError, ValueError):
     from .toonbridge_manifest import ToonBridgePackage
     from .toonbridge_node_factory import ToonBridgeNodeFactory
     from .toonbridge_cel_builder import ToonBridgeCelBuilder
+
+
+def sanitize_unreal_name(name: str) -> str:
+    """Sanitizes names for Unreal Engine asset naming rules (no spaces, dots, or invalid chars)."""
+    clean = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    clean = re.sub(r'_+', '_', clean).strip('_')
+    return clean or "Asset"
 
 
 class ToonBridgeImporter:
@@ -42,7 +50,8 @@ class ToonBridgeImporter:
             return False
 
         try:
-            unreal.log(f"[ToonBridge] Starting import for material: {pkg.material_name}")
+            clean_mat_name = sanitize_unreal_name(pkg.material_name)
+            unreal.log(f"[ToonBridge] Starting import for material: {clean_mat_name}")
 
             # 1. Import Baked Textures & 1D LUTs
             imported_textures = self._import_textures(pkg)
@@ -57,11 +66,13 @@ class ToonBridgeImporter:
             if imported_mesh and material_asset:
                 self._assign_material_to_mesh(imported_mesh, material_asset)
 
-            unreal.log(f"[ToonBridge] Successfully imported and reconstructed {pkg.material_name}!")
+            unreal.log(f"[ToonBridge] Successfully imported and reconstructed M_{clean_mat_name}!")
             return True
 
         except Exception as e:
             unreal.log_error(f"[ToonBridge] Import failed with exception: {e}")
+            import traceback
+            unreal.log_error(traceback.format_exc())
             return False
 
         finally:
@@ -80,7 +91,8 @@ class ToonBridgeImporter:
             if not os.path.exists(abs_path):
                 continue
 
-            asset_name = os.path.splitext(os.path.basename(rel_path))[0]
+            raw_name = os.path.splitext(os.path.basename(rel_path))[0]
+            asset_name = sanitize_unreal_name(raw_name)
 
             task = unreal.AssetImportTask()
             task.set_editor_property("filename", abs_path)
@@ -109,6 +121,12 @@ class ToonBridgeImporter:
                         tex_obj.set_editor_property("address_y", unreal.TextureAddress.TA_CLAMP)
                     except Exception:
                         pass
+
+                    try:
+                        unreal.EditorAssetLibrary.save_loaded_asset(tex_obj)
+                    except Exception:
+                        pass
+
                 texture_assets[node_id] = tex_obj
 
         return texture_assets
@@ -124,7 +142,8 @@ class ToonBridgeImporter:
         if not os.path.exists(abs_path):
             return None
 
-        mesh_name = os.path.splitext(os.path.basename(rel_path))[0]
+        raw_name = os.path.splitext(os.path.basename(rel_path))[0]
+        mesh_name = sanitize_unreal_name(raw_name)
 
         task = unreal.AssetImportTask()
         task.set_editor_property("filename", abs_path)
@@ -138,10 +157,14 @@ class ToonBridgeImporter:
         fbx_options.set_editor_property("import_mesh", True)
         fbx_options.set_editor_property("import_textures", False)
         fbx_options.set_editor_property("import_materials", False)
-        fbx_options.static_mesh_import_data.set_editor_property("combine_meshes", True)
-        fbx_options.static_mesh_import_data.set_editor_property(
-            "normal_import_method", unreal.FBXNormalImportMethod.FBXNIM_IMPORT_NORMALS
-        )
+        try:
+            fbx_options.static_mesh_import_data.set_editor_property("combine_meshes", True)
+            fbx_options.static_mesh_import_data.set_editor_property(
+                "normal_import_method", unreal.FBXNormalImportMethod.FBXNIM_IMPORT_NORMALS
+            )
+        except Exception:
+            pass
+
         task.set_editor_property("options", fbx_options)
 
         unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
@@ -152,7 +175,8 @@ class ToonBridgeImporter:
 
     def _reconstruct_material(self, pkg: ToonBridgePackage, imported_textures: Dict[str, Any]):
         """Builds the complete material expression graph."""
-        mat_name = f"M_{pkg.material_name}"
+        clean_mat_name = sanitize_unreal_name(pkg.material_name)
+        mat_name = f"M_{clean_mat_name}"
         asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 
         # Create Material Asset
@@ -164,14 +188,15 @@ class ToonBridgeImporter:
         )
 
         if not material:
+            unreal.log_error(f"[ToonBridge] Could not create material asset: {mat_name}")
             return None
 
         created_expressions: Dict[str, Any] = {}
 
-        # 1. Instantiate direct nodes
+        # 1. Instantiate direct math / constant nodes
         for node_id, node_data in pkg.nodes.items():
             ir_type = node_data.get("ir_type")
-            if ir_type in ("MATERIAL_OUTPUT", "SHADER_TO_RGB"):
+            if ir_type in ("MATERIAL_OUTPUT", "SHADER_TO_RGB", "COLOR_RAMP"):
                 continue
 
             expr = ToonBridgeNodeFactory.create_expression(material, node_data, imported_textures)
@@ -190,20 +215,15 @@ class ToonBridgeImporter:
             if cel_expr:
                 created_expressions[ramp_node_id] = cel_expr
 
-        # 3. Wire all connections
+        # 3. Wire internal graph connections
+        output_node_id = pkg.manifest.get("output_node_id", "Material Output")
         for conn in pkg.connections:
             from_id = conn["from_node"]
             to_id = conn["to_node"]
             from_sock = conn["from_socket"]
             to_sock = conn["to_socket"]
 
-            # Handle Material Output connection
-            if to_id == pkg.manifest.get("output_node_id"):
-                final_expr = created_expressions.get(from_id)
-                if final_expr:
-                    unreal.MaterialEditingLibrary.connect_material_property(
-                        final_expr, "", unreal.MaterialProperty.MP_BASE_COLOR
-                    )
+            if to_id == output_node_id:
                 continue
 
             from_expr = created_expressions.get(from_id)
@@ -211,15 +231,66 @@ class ToonBridgeImporter:
             if from_expr and to_expr:
                 ToonBridgeNodeFactory.connect_pins(from_expr, from_sock, to_expr, to_sock)
 
-        # 4. Compile and update material graph
+        # 4. Resolve and connect final output pin to Base Color & Emissive
+        terminal_expr = self._resolve_terminal_expression(output_node_id, pkg.connections, created_expressions)
+        if terminal_expr:
+            try:
+                unreal.MaterialEditingLibrary.connect_material_property(
+                    terminal_expr, "", unreal.MaterialProperty.MP_BASE_COLOR
+                )
+            except Exception as e:
+                unreal.log_warning(f"[ToonBridge] Base Color connection warning: {e}")
+
+        # 5. Compile and update material graph
         unreal.MaterialEditingLibrary.update_material_after_graph_change(material)
         unreal.EditorAssetLibrary.save_loaded_asset(material)
+        unreal.log(f"[ToonBridge] Reconstructed Material saved to: {self.material_path}/{mat_name}")
         return material
+
+    def _resolve_terminal_expression(self, output_id: str, connections: list, created_expressions: dict):
+        """Finds the final shader/color expression that should drive Base Color."""
+        # 1. Direct connection to output node
+        for conn in connections:
+            if conn["to_node"] == output_id:
+                from_id = conn["from_node"]
+                if from_id in created_expressions:
+                    return created_expressions[from_id]
+
+                # Look one level back if connected through a BSDF or Emission node
+                for sub in connections:
+                    if sub["to_node"] == from_id:
+                        sub_from = sub["from_node"]
+                        if sub_from in created_expressions:
+                            return created_expressions[sub_from]
+
+        # 2. Fallback: Return the last created cel or color expression
+        for expr in reversed(list(created_expressions.values())):
+            if expr:
+                return expr
+
+        return None
 
     def _assign_material_to_mesh(self, mesh_asset, material_asset):
         """Assigns the reconstructed material to the imported Static Mesh."""
+        if not mesh_asset or not material_asset:
+            return
+
         try:
-            mesh_asset.set_material(0, material_asset)
+            # Method 1: EditorStaticMeshLibrary
+            unreal.EditorStaticMeshLibrary.set_material(mesh_asset, 0, material_asset)
             unreal.EditorAssetLibrary.save_loaded_asset(mesh_asset)
+            unreal.log(f"[ToonBridge] Assigned material to mesh: {mesh_asset.get_name()}")
+            return
+        except Exception:
+            pass
+
+        try:
+            # Method 2: StaticMaterials property
+            mesh_asset.set_editor_property(
+                "static_materials",
+                [unreal.StaticMaterial(material_interface=material_asset)]
+            )
+            unreal.EditorAssetLibrary.save_loaded_asset(mesh_asset)
+            unreal.log(f"[ToonBridge] Assigned material to mesh: {mesh_asset.get_name()}")
         except Exception as e:
-            unreal.log_warning(f"[ToonBridge] Could not auto-assign material to mesh: {e}")
+            unreal.log_warning(f"[ToonBridge] Note on mesh material assignment: {e}")
