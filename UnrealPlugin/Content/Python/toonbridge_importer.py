@@ -193,7 +193,7 @@ class ToonBridgeImporter:
 
         created_expressions: Dict[str, Any] = {}
 
-        # 1. Instantiate direct math / constant nodes
+        # 1. Instantiate direct nodes (Math, Mix, Vector, Coordinates, Constants)
         for node_id, node_data in pkg.nodes.items():
             ir_type = node_data.get("ir_type")
             if ir_type in ("MATERIAL_OUTPUT", "SHADER_TO_RGB", "COLOR_RAMP"):
@@ -203,19 +203,43 @@ class ToonBridgeImporter:
             if expr:
                 created_expressions[node_id] = expr
 
-        # 2. Build Cel-Shading sub-networks for ColorRamps
+        # 2. Identify Cel-Shading chains vs Standard Gradient ramps
+        cel_ramp_ids = set()
+        for chain in pkg.manifest.get("cel_chains", []):
+            for r_id in chain.get("downstream_color_ramps", []):
+                cel_ramp_ids.add(r_id)
+
+        # 3. Instantiate ColorRamp expressions with clean driver inputs
         for ramp_entry in pkg.color_ramps:
             ramp_node_id = ramp_entry["node_id"]
+            node_data = pkg.nodes.get(ramp_node_id, {})
             lut_tex = imported_textures.get(ramp_node_id)
-            cel_expr = ToonBridgeCelBuilder.build_cel_shading_network(
-                material=material,
-                ramp_entry=ramp_entry,
-                lut_texture_asset=lut_tex
-            )
-            if cel_expr:
-                created_expressions[ramp_node_id] = cel_expr
+            is_cel_lighting = (ramp_node_id in cel_ramp_ids)
 
-        # 3. Wire internal graph connections
+            # Find driver connection into this ColorRamp
+            driver_expr = None
+            driver_sock = ""
+            if not is_cel_lighting:
+                for conn in pkg.connections:
+                    if conn["to_node"] == ramp_node_id and conn["to_socket"] in ("Fac", "Factor", "Value"):
+                        driver_id = conn["from_node"]
+                        driver_sock = conn["from_socket"]
+                        driver_expr = created_expressions.get(driver_id)
+                        break
+
+            ramp_expr = ToonBridgeCelBuilder.build_color_ramp_expression(
+                material=material,
+                node_data=node_data,
+                ramp_entry=ramp_entry,
+                lut_texture_asset=lut_tex,
+                is_cel_lighting_ramp=is_cel_lighting,
+                incoming_driver_expr=driver_expr,
+                incoming_driver_sock=driver_sock
+            )
+            if ramp_expr:
+                created_expressions[ramp_node_id] = ramp_expr
+
+        # 4. Wire downstream connections (Mix, Multiply, Add, etc.)
         output_node_id = pkg.manifest.get("output_node_id", "Material Output")
         for conn in pkg.connections:
             from_id = conn["from_node"]
@@ -223,7 +247,10 @@ class ToonBridgeImporter:
             from_sock = conn["from_socket"]
             to_sock = conn["to_socket"]
 
+            # Skip output node and ColorRamp Fac links (already handled)
             if to_id == output_node_id:
+                continue
+            if to_id in pkg.nodes and pkg.nodes[to_id].get("ir_type") == "COLOR_RAMP":
                 continue
 
             from_expr = created_expressions.get(from_id)
@@ -231,7 +258,7 @@ class ToonBridgeImporter:
             if from_expr and to_expr:
                 ToonBridgeNodeFactory.connect_pins(from_expr, from_sock, to_expr, to_sock)
 
-        # 4. Resolve and connect final output pin to Base Color & Emissive
+        # 5. Connect terminal output to Base Color
         terminal_expr = self._resolve_terminal_expression(output_node_id, pkg.connections, created_expressions)
         if terminal_expr:
             try:
@@ -239,9 +266,22 @@ class ToonBridgeImporter:
                     terminal_expr, "", unreal.MaterialProperty.MP_BASE_COLOR
                 )
             except Exception as e:
-                unreal.log_warning(f"[ToonBridge] Base Color connection warning: {e}")
+                unreal.log_warning(f"[ToonBridge] Base Color connection: {e}")
 
-        # 5. Compile and update material graph
+        # Set Roughness to 1.0 and Specular to 0.0 to eliminate deferred plastic glare
+        try:
+            const_rough = unreal.MaterialEditingLibrary.create_material_expression(
+                material, unreal.MaterialExpressionConstant, -100, 200
+            )
+            if const_rough:
+                const_rough.set_editor_property("r", 1.0)
+                unreal.MaterialEditingLibrary.connect_material_property(
+                    const_rough, "", unreal.MaterialProperty.MP_ROUGHNESS
+                )
+        except Exception:
+            pass
+
+        # 6. Recompile and save material
         try:
             unreal.MaterialEditingLibrary.recompile_material(material)
         except Exception:
@@ -277,7 +317,7 @@ class ToonBridgeImporter:
                         if sub_from in created_expressions:
                             return created_expressions[sub_from]
 
-        # 2. Fallback: Return the last created cel or color expression
+        # 2. Fallback: Return the last created expression
         for expr in reversed(list(created_expressions.values())):
             if expr:
                 return expr
@@ -290,7 +330,6 @@ class ToonBridgeImporter:
             return
 
         try:
-            # Method 1: EditorStaticMeshLibrary
             unreal.EditorStaticMeshLibrary.set_material(mesh_asset, 0, material_asset)
             unreal.EditorAssetLibrary.save_loaded_asset(mesh_asset)
             unreal.log(f"[ToonBridge] Assigned material to mesh: {mesh_asset.get_name()}")
@@ -299,7 +338,6 @@ class ToonBridgeImporter:
             pass
 
         try:
-            # Method 2: StaticMaterials property slot
             static_materials = mesh_asset.get_editor_property("static_materials")
             if static_materials and len(static_materials) > 0:
                 static_materials[0].set_editor_property("material_interface", material_asset)
@@ -309,6 +347,6 @@ class ToonBridgeImporter:
                 mat_slot.set_editor_property("material_slot_name", "M_Toon")
                 mesh_asset.set_editor_property("static_materials", [mat_slot])
             unreal.EditorAssetLibrary.save_loaded_asset(mesh_asset)
-            unreal.log(f"[ToonBridge] Assigned material to mesh: {mesh_asset.get_name()}")
+            unreal.log(f"[ToonBridge] Assigned material to mesh static_materials.")
         except Exception as e:
             unreal.log_warning(f"[ToonBridge] Note on mesh material assignment: {e}")

@@ -24,7 +24,7 @@ class ToonBridgeNodeFactory:
         attrs = node_info.get("attributes", {})
         loc = node_info.get("location", [0.0, 0.0])
         node_x = int(loc[0])
-        node_y = int(-loc[1])  # Invert Y to match Unreal's graph coordinate space
+        node_y = int(-loc[1])  # Invert Y to match Unreal's coordinate space
 
         expr = None
 
@@ -82,16 +82,34 @@ class ToonBridgeNodeFactory:
             # Linear Interpolation (Lerp)
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
 
+        elif ir_type == "MAP_RANGE":
+            # Map Range linear fallback
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
+
+        elif ir_type == "SEPARATE_CHANNELS":
+            # Component mask for channel separation (Default to G/Y for vertical gradient if sampling Y)
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionComponentMask, node_x, node_y)
+            if expr:
+                expr.set_editor_property("r", False)
+                expr.set_editor_property("g", True)
+                expr.set_editor_property("b", False)
+                expr.set_editor_property("a", False)
+
+        elif ir_type == "COMBINE_CHANNELS":
+            expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionAppendVector, node_x, node_y)
+
         elif ir_type == "CONSTANT_FLOAT":
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionScalarParameter, node_x, node_y)
             if expr:
-                expr.set_editor_property("parameter_name", node_info.get("id", "ScalarParam"))
-                expr.set_editor_property("default_value", attrs.get("value", 1.0))
+                clean_param_name = node_info.get("id", "ScalarParam").replace(" ", "_").replace(".", "_")
+                expr.set_editor_property("parameter_name", clean_param_name)
+                expr.set_editor_property("default_value", float(attrs.get("value", 1.0)))
 
         elif ir_type == "CONSTANT_COLOR":
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionVectorParameter, node_x, node_y)
             if expr:
-                expr.set_editor_property("parameter_name", node_info.get("id", "ColorParam"))
+                clean_param_name = node_info.get("id", "ColorParam").replace(" ", "_").replace(".", "_")
+                expr.set_editor_property("parameter_name", clean_param_name)
                 col = attrs.get("color", [1.0, 1.0, 1.0, 1.0])
                 linear_color = unreal.LinearColor(col[0], col[1], col[2], col[3] if len(col) > 3 else 1.0)
                 expr.set_editor_property("default_value", linear_color)
@@ -122,30 +140,31 @@ class ToonBridgeNodeFactory:
             return False
 
         try:
-            # Clean socket name matching
+            # Match output socket
             out_pin = ""
-            if "Alpha" in from_output_name or from_output_name == "A":
+            if from_output_name in ("A", "Alpha"):
                 out_pin = "A"
-            elif "Red" in from_output_name or from_output_name == "R":
+            elif from_output_name in ("R", "X", "Red"):
                 out_pin = "R"
-            elif "Green" in from_output_name or from_output_name == "G":
+            elif from_output_name in ("G", "Y", "Green"):
                 out_pin = "G"
-            elif "Blue" in from_output_name or from_output_name == "B":
+            elif from_output_name in ("B", "Z", "Blue"):
                 out_pin = "B"
 
-            # Input socket matching
+            # Match input socket
             in_pin = ""
-            if to_input_name in ("A", "Value1", "Vector1", "Base"):
+            if to_input_name in ("A", "Value1", "Vector1", "Base", "Input", "Vector"):
                 in_pin = "A"
             elif to_input_name in ("B", "Value2", "Vector2", "Exp"):
                 in_pin = "B"
             elif to_input_name in ("Alpha", "Fac", "Factor"):
                 in_pin = "Alpha"
+            elif to_input_name in ("UVs", "Coordinates"):
+                in_pin = "UVs"
 
             unreal.MaterialEditingLibrary.connect_material_expressions(
                 from_expr, out_pin, to_expr, in_pin
             )
             return True
         except Exception as e:
-            print(f"[ToonBridge] Pin connection warning ({from_output_name} -> {to_input_name}): {e}")
             return False
