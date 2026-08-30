@@ -83,6 +83,7 @@ class ToonBridgeGraphParser:
         'ShaderNodeTexChecker',
         'ShaderNodeTexBrick',
         'ShaderNodeTexGradient',
+        'ShaderNodeGroup',  # Auto-bake procedural node groups (BlurryNoise, PainterlyBrush, Hatching, Fog)
     }
 
     def __init__(self, node_tree=None):
@@ -158,9 +159,13 @@ class ToonBridgeGraphParser:
 
     def _parse_single_node(self, node) -> Optional[Dict[str, Any]]:
         bl_type = node.bl_idname
+        label_or_name = getattr(node, "label", "") or getattr(node, "name", "")
+        if bl_type == 'ShaderNodeGroup' and getattr(node, 'node_tree', None):
+            label_or_name = getattr(node.node_tree, "name", label_or_name)
+
         node_info: Dict[str, Any] = {
             "id": node.name,
-            "label": getattr(node, "label", "") or node.name,
+            "label": label_or_name,
             "blender_type": bl_type,
             "location": [float(node.location.x), float(node.location.y)],
             "inputs": self._parse_node_inputs(node),
@@ -267,9 +272,6 @@ class ToonBridgeGraphParser:
         elif bl_type == 'ShaderNodeEmission':
             node_info["ir_type"] = "EMISSION"
 
-        elif bl_type == 'ShaderNodeGroup':
-            node_info["ir_type"] = "GROUP_NODE"
-
         elif bl_type == 'ShaderNodeOutputMaterial':
             node_info["ir_type"] = "MATERIAL_OUTPUT"
 
@@ -347,7 +349,7 @@ class ToonBridgeGraphParser:
                             continue
                         if target_node.get("ir_type") == "COLOR_RAMP":
                             downstream_ramps.append(target_id)
-                        elif target_node.get("ir_type") in ("MATH", "VECTOR_MATH", "MIX", "MAP_RANGE"):
+                        elif target_node.get("ir_type") in ("MATH", "VECTOR_MATH", "MIX", "MAP_RANGE", "PROCEDURAL_NOISE"):
                             queue.append(target_id)
 
             if downstream_ramps:

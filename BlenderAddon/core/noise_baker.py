@@ -1,6 +1,6 @@
 """
 ToonBridge Procedural Noise Baker
-Detects non-transferable procedural texture subtrees and bakes them to seamless image maps.
+Detects non-transferable procedural texture subtrees and Node Groups (BlurryNoise, Fog, Hatching) and bakes them to seamless image maps.
 """
 
 import os
@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 
 class ProceduralNoiseBaker:
-    """Automates isolation and baking of Blender procedural textures into 2K/4K image maps."""
+    """Automates isolation and baking of Blender procedural textures and Node Groups into 2K/4K image maps."""
 
     PROCEDURAL_TYPES = {
         'ShaderNodeTexNoise',
@@ -18,6 +18,7 @@ class ProceduralNoiseBaker:
         'ShaderNodeTexMagic',
         'ShaderNodeTexChecker',
         'ShaderNodeTexBrick',
+        'ShaderNodeGroup',  # Node Groups (like BlurryNoise, PainterlyBrush, Hatching, Fog)
     }
 
     def __init__(self, context=None, resolution: int = 2048):
@@ -25,7 +26,7 @@ class ProceduralNoiseBaker:
         self.resolution = resolution
 
     def find_procedural_nodes(self, material) -> List[Any]:
-        """Finds all procedural texture nodes in the material node tree."""
+        """Finds all procedural texture and node group nodes in the material node tree."""
         if not material or not material.use_nodes or not material.node_tree:
             return []
 
@@ -44,7 +45,7 @@ class ProceduralNoiseBaker:
         filename: Optional[str] = None
     ) -> Optional[str]:
         """
-        Temporarily isolates the procedural node through an Emission shader and bakes to PNG.
+        Temporarily isolates the procedural node/group through an Emission shader and bakes to PNG.
         Returns the absolute filepath of the baked image.
         """
         try:
@@ -91,12 +92,25 @@ class ProceduralNoiseBaker:
 
         # Store original output link
         original_surface_link = None
+        from_socket = None
         if output_node.inputs['Surface'].is_linked:
             original_surface_link = output_node.inputs['Surface'].links[0]
             from_socket = original_surface_link.from_socket
 
-        # Connect noise node output (Color or Fac) -> Emission -> Surface
-        noise_output = noise_node.outputs.get('Color') or noise_node.outputs.get('Fac') or noise_node.outputs[0]
+        # Connect noise node output (Color, Fac, Result, or output 0) -> Emission -> Surface
+        noise_output = (
+            noise_node.outputs.get('Color')
+            or noise_node.outputs.get('Result')
+            or noise_node.outputs.get('Fac')
+            or (noise_node.outputs[0] if len(noise_node.outputs) > 0 else None)
+        )
+
+        if not noise_output:
+            nodes.remove(img_node)
+            nodes.remove(emission_node)
+            bpy.data.images.remove(bake_img)
+            return None
+
         links.new(noise_output, emission_node.inputs['Color'])
         links.new(emission_node.outputs['Emission'], output_node.inputs['Surface'])
 
@@ -113,9 +127,9 @@ class ProceduralNoiseBaker:
             bake_img.filepath_raw = output_path
             bake_img.file_format = 'PNG'
             bake_img.save()
-            print(f"[ToonBridge] Successfully baked procedural node to: {output_path}")
+            print(f"[ToonBridge] Successfully baked procedural node ({noise_node.name}) to: {output_path}")
         except Exception as e:
-            print(f"[ToonBridge] Bake failed: {e}")
+            print(f"[ToonBridge] Bake failed for {noise_node.name}: {e}")
             output_path = None
         finally:
             # 5. Cleanup temporary nodes and restore original links
