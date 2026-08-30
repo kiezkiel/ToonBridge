@@ -12,13 +12,13 @@ except ImportError:
     unreal = None
 
 try:
-    from .toonbridge_manifest import ToonBridgePackage
-    from .toonbridge_node_factory import ToonBridgeNodeFactory
-    from .toonbridge_cel_builder import ToonBridgeCelBuilder
-except (ImportError, ValueError):
     from toonbridge_manifest import ToonBridgePackage
     from toonbridge_node_factory import ToonBridgeNodeFactory
     from toonbridge_cel_builder import ToonBridgeCelBuilder
+except (ImportError, ValueError):
+    from .toonbridge_manifest import ToonBridgePackage
+    from .toonbridge_node_factory import ToonBridgeNodeFactory
+    from .toonbridge_cel_builder import ToonBridgeCelBuilder
 
 
 class ToonBridgeImporter:
