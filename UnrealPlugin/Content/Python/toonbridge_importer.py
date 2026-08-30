@@ -242,8 +242,22 @@ class ToonBridgeImporter:
                 unreal.log_warning(f"[ToonBridge] Base Color connection warning: {e}")
 
         # 5. Compile and update material graph
-        unreal.MaterialEditingLibrary.update_material_after_graph_change(material)
-        unreal.EditorAssetLibrary.save_loaded_asset(material)
+        try:
+            unreal.MaterialEditingLibrary.recompile_material(material)
+        except Exception:
+            try:
+                unreal.MaterialEditingLibrary.update_material_after_graph_change(material)
+            except Exception:
+                try:
+                    material.post_edit_change()
+                except Exception:
+                    pass
+
+        try:
+            unreal.EditorAssetLibrary.save_loaded_asset(material)
+        except Exception:
+            pass
+
         unreal.log(f"[ToonBridge] Reconstructed Material saved to: {self.material_path}/{mat_name}")
         return material
 
@@ -285,11 +299,15 @@ class ToonBridgeImporter:
             pass
 
         try:
-            # Method 2: StaticMaterials property
-            mesh_asset.set_editor_property(
-                "static_materials",
-                [unreal.StaticMaterial(material_interface=material_asset)]
-            )
+            # Method 2: StaticMaterials property slot
+            static_materials = mesh_asset.get_editor_property("static_materials")
+            if static_materials and len(static_materials) > 0:
+                static_materials[0].set_editor_property("material_interface", material_asset)
+            else:
+                mat_slot = unreal.StaticMaterial()
+                mat_slot.set_editor_property("material_interface", material_asset)
+                mat_slot.set_editor_property("material_slot_name", "M_Toon")
+                mesh_asset.set_editor_property("static_materials", [mat_slot])
             unreal.EditorAssetLibrary.save_loaded_asset(mesh_asset)
             unreal.log(f"[ToonBridge] Assigned material to mesh: {mesh_asset.get_name()}")
         except Exception as e:
