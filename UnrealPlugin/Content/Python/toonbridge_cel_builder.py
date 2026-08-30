@@ -94,15 +94,19 @@ class ToonBridgeCelBuilder:
                 unreal.MaterialEditingLibrary.connect_material_expressions(saturate, "", append_uv, "A")
 
         elif incoming_driver_expr:
-            # Driven by upstream node (e.g. UV, Separate XYZ, Noise)
-            # Default to 'R' (or specific channel) to guarantee a scalar float into AppendVector
-            out_pin = "R"
-            if incoming_driver_sock in ("G", "Y", "Green"):
-                out_pin = "G"
-            elif incoming_driver_sock in ("B", "Z", "Blue"):
-                out_pin = "B"
-            elif incoming_driver_sock in ("A", "Alpha"):
-                out_pin = "A"
+            # Driven by upstream node (e.g. UV, Separate XYZ, Noise, Mix)
+            out_pin = ""
+            if isinstance(incoming_driver_expr, unreal.MaterialExpressionTextureSample):
+                out_pin = "R"
+                if incoming_driver_sock in ("G", "Y", "Green"):
+                    out_pin = "G"
+                elif incoming_driver_sock in ("B", "Z", "Blue"):
+                    out_pin = "B"
+                elif incoming_driver_sock in ("A", "Alpha"):
+                    out_pin = "A"
+            else:
+                # For LinearInterpolate, Math, ComponentMask, etc.
+                out_pin = ""
 
             if append_uv:
                 unreal.MaterialEditingLibrary.connect_material_expressions(incoming_driver_expr, out_pin, append_uv, "A")

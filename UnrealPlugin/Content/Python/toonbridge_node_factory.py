@@ -82,6 +82,34 @@ class ToonBridgeNodeFactory:
             # Linear Interpolation (Lerp)
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
 
+        elif ir_type == "SHADER_TO_RGB":
+            # Real-time Cel-Lighting calculation (N dot L)
+            world_normal = unreal.MaterialEditingLibrary.create_material_expression(
+                material, unreal.MaterialExpressionPixelNormalWS, node_x - 300, node_y - 60
+            )
+            light_vector = unreal.MaterialEditingLibrary.create_material_expression(
+                material, unreal.MaterialExpressionVectorParameter, node_x - 300, node_y + 80
+            )
+            if light_vector:
+                light_vector.set_editor_property("parameter_name", "Toon_SunDirection")
+                light_vector.set_editor_property(
+                    "default_value", unreal.LinearColor(0.577, 0.577, 0.577, 1.0)
+                )
+
+            dot_product = unreal.MaterialEditingLibrary.create_material_expression(
+                material, unreal.MaterialExpressionDotProduct, node_x - 120, node_y
+            )
+            saturate = unreal.MaterialEditingLibrary.create_material_expression(
+                material, unreal.MaterialExpressionSaturate, node_x, node_y
+            )
+
+            if world_normal and light_vector and dot_product and saturate:
+                unreal.MaterialEditingLibrary.connect_material_expressions(world_normal, "", dot_product, "A")
+                unreal.MaterialEditingLibrary.connect_material_expressions(light_vector, "", dot_product, "B")
+                unreal.MaterialEditingLibrary.connect_material_expressions(dot_product, "", saturate, "")
+
+            return saturate
+
         elif ir_type == "MAP_RANGE":
             # Map Range linear fallback
             expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionLinearInterpolate, node_x, node_y)
@@ -134,14 +162,16 @@ class ToonBridgeNodeFactory:
             clean_id = node_id.replace(" ", "_").replace(".", "_") if node_id else ""
             tex_asset = None
             if imported_textures:
-                tex_asset = imported_textures.get(node_id) or imported_textures.get(clean_id)
+                tex_asset = (
+                    imported_textures.get(node_id)
+                    or imported_textures.get(clean_id)
+                )
 
             if tex_asset:
                 expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureSample, node_x, node_y)
                 if expr:
                     expr.set_editor_property("texture", tex_asset)
             else:
-                # Safe fallback: create Constant3Vector instead of an unassigned broken TextureSample
                 expr = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionConstant3Vector, node_x, node_y)
                 if expr:
                     expr.set_editor_property("constant", unreal.LinearColor(0.8, 0.8, 0.8, 1.0))
@@ -161,18 +191,21 @@ class ToonBridgeNodeFactory:
             return False
 
         try:
-            # Match output socket
+            # Determine correct output pin
             out_pin = ""
-            if from_output_name in ("A", "Alpha"):
-                out_pin = "A"
-            elif from_output_name in ("R", "X", "Red"):
-                out_pin = "R"
-            elif from_output_name in ("G", "Y", "Green"):
-                out_pin = "G"
-            elif from_output_name in ("B", "Z", "Blue"):
-                out_pin = "B"
+            if isinstance(from_expr, unreal.MaterialExpressionTextureSample):
+                if from_output_name in ("A", "Alpha"):
+                    out_pin = "A"
+                elif from_output_name in ("R", "X", "Red", "Fac", "Factor", "Value"):
+                    out_pin = "R"
+                elif from_output_name in ("G", "Y", "Green"):
+                    out_pin = "G"
+                elif from_output_name in ("B", "Z", "Blue"):
+                    out_pin = "B"
+                else:
+                    out_pin = ""  # Full RGB
 
-            # Match input socket
+            # Determine correct input pin
             in_pin = ""
             if to_input_name in ("Alpha", "Fac", "Factor"):
                 in_pin = "Alpha"
@@ -181,7 +214,6 @@ class ToonBridgeNodeFactory:
             elif to_input_name in ("B", "Value2", "Vector2", "Exp", "Color2"):
                 in_pin = "B"
             elif to_input_name == "Shader":
-                # For Mix Shader: index 1 is Shader A, index 2 is Shader B
                 in_pin = "B" if socket_index >= 2 else "A"
             elif to_input_name in ("UVs", "Coordinates"):
                 in_pin = "UVs"

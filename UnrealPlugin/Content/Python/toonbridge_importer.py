@@ -107,7 +107,6 @@ class ToonBridgeImporter:
             if imported_asset:
                 tex_obj = unreal.EditorAssetLibrary.load_asset(imported_asset[0])
                 if "LUT" in asset_name and tex_obj:
-                    # Configure LUT Texture settings (Clamp addressing, LinearColor / non-SRGB)
                     try:
                         tex_obj.set_editor_property("srgb", False)
                     except Exception:
@@ -196,17 +195,17 @@ class ToonBridgeImporter:
 
         created_expressions: Dict[str, Any] = {}
 
-        # 1. Instantiate direct nodes (Math, Mix, Vector, Coordinates, Constants)
+        # 1. Instantiate direct nodes (Math, Mix, Vector, Shader to RGB, Fresnel, Coords)
         for node_id, node_data in pkg.nodes.items():
             ir_type = node_data.get("ir_type")
-            if ir_type in ("MATERIAL_OUTPUT", "SHADER_TO_RGB", "COLOR_RAMP"):
+            if ir_type in ("MATERIAL_OUTPUT", "COLOR_RAMP"):
                 continue
 
             expr = ToonBridgeNodeFactory.create_expression(material, node_data, imported_textures)
             if expr:
                 created_expressions[node_id] = expr
 
-        # 2. Identify Cel-Shading chains vs Standard Gradient ramps
+        # 2. Identify Cel-Shading chains
         cel_ramp_ids = set()
         for chain in pkg.manifest.get("cel_chains", []):
             for r_id in chain.get("downstream_color_ramps", []):
@@ -216,19 +215,21 @@ class ToonBridgeImporter:
         for ramp_entry in pkg.color_ramps:
             ramp_node_id = ramp_entry["node_id"]
             node_data = pkg.nodes.get(ramp_node_id, {})
-            lut_tex = imported_textures.get(ramp_node_id)
+            lut_tex = (
+                imported_textures.get(ramp_node_id)
+                or imported_textures.get(ramp_node_id.replace(" ", "_").replace(".", "_"))
+            )
             is_cel_lighting = (ramp_node_id in cel_ramp_ids)
 
             # Find driver connection into this ColorRamp
             driver_expr = None
             driver_sock = ""
-            if not is_cel_lighting:
-                for conn in pkg.connections:
-                    if conn["to_node"] == ramp_node_id and conn["to_socket"] in ("Fac", "Factor", "Value"):
-                        driver_id = conn["from_node"]
-                        driver_sock = conn["from_socket"]
-                        driver_expr = created_expressions.get(driver_id)
-                        break
+            for conn in pkg.connections:
+                if conn["to_node"] == ramp_node_id and conn["to_socket"] in ("Fac", "Factor", "Value"):
+                    driver_id = conn["from_node"]
+                    driver_sock = conn["from_socket"]
+                    driver_expr = created_expressions.get(driver_id)
+                    break
 
             ramp_expr = ToonBridgeCelBuilder.build_color_ramp_expression(
                 material=material,
@@ -249,28 +250,39 @@ class ToonBridgeImporter:
             to_id = conn["to_node"]
             from_sock = conn["from_socket"]
             to_sock = conn["to_socket"]
+            to_sock_idx = conn.get("to_socket_index", 0)
 
             # Skip output node and ColorRamp Fac links (already handled)
             if to_id == output_node_id:
                 continue
-            if to_id in pkg.nodes and pkg.nodes[to_id].get("ir_type") == "COLOR_RAMP":
+            if to_id in pkg.nodes and pkg.nodes[to_id].get("ir_type") == "COLOR_RAMP" and to_sock in ("Fac", "Factor", "Value"):
                 continue
 
-            to_sock_idx = conn.get("to_socket_index", 0)
             from_expr = created_expressions.get(from_id)
             to_expr = created_expressions.get(to_id)
             if from_expr and to_expr:
                 ToonBridgeNodeFactory.connect_pins(from_expr, from_sock, to_expr, to_sock, to_sock_idx)
 
-        # 5. Connect terminal output to Base Color
-        terminal_expr = self._resolve_terminal_expression(output_node_id, pkg.connections, created_expressions)
-        if terminal_expr:
+        # 5. Connect Base Color and Opacity Mask
+        base_color_expr, opacity_mask_expr = self._resolve_output_pins(output_node_id, pkg.connections, created_expressions, pkg.nodes)
+        
+        if base_color_expr:
             try:
                 unreal.MaterialEditingLibrary.connect_material_property(
-                    terminal_expr, "", unreal.MaterialProperty.MP_BASE_COLOR
+                    base_color_expr, "", unreal.MaterialProperty.MP_BASE_COLOR
                 )
             except Exception as e:
                 unreal.log_warning(f"[ToonBridge] Base Color connection: {e}")
+
+        if opacity_mask_expr:
+            try:
+                # Set Blend Mode to Masked
+                material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+                unreal.MaterialEditingLibrary.connect_material_property(
+                    opacity_mask_expr, "", unreal.MaterialProperty.MP_OPACITY_MASK
+                )
+            except Exception as e:
+                unreal.log_warning(f"[ToonBridge] Opacity Mask connection: {e}")
 
         # Set Roughness to 1.0 and Specular to 0.0 to eliminate deferred plastic glare
         try:
@@ -305,28 +317,44 @@ class ToonBridgeImporter:
         unreal.log(f"[ToonBridge] Reconstructed Material saved to: {self.material_path}/{mat_name}")
         return material
 
-    def _resolve_terminal_expression(self, output_id: str, connections: list, created_expressions: dict):
-        """Finds the final shader/color expression that should drive Base Color."""
-        # 1. Direct connection to output node
+    def _resolve_output_pins(self, output_id: str, connections: list, created_expressions: dict, nodes: dict):
+        """Resolves Base Color and Opacity Mask expressions from the terminal node."""
+        base_color_expr = None
+        opacity_mask_expr = None
+
         for conn in connections:
             if conn["to_node"] == output_id:
                 from_id = conn["from_node"]
-                if from_id in created_expressions:
-                    return created_expressions[from_id]
+                node_type = nodes.get(from_id, {}).get("ir_type")
 
-                # Look one level back if connected through a BSDF or Emission node
-                for sub in connections:
-                    if sub["to_node"] == from_id:
-                        sub_from = sub["from_node"]
-                        if sub_from in created_expressions:
-                            return created_expressions[sub_from]
+                if node_type == "MIX_SHADER":
+                    # For Mix Shader: find the main surface shader (ColorRamp / BSDF) and the factor
+                    for sub in connections:
+                        if sub["to_node"] == from_id:
+                            sub_from = sub["from_node"]
+                            sub_type = nodes.get(sub_from, {}).get("ir_type")
+                            if sub["to_socket"] in ("Fac", "Factor"):
+                                opacity_mask_expr = created_expressions.get(sub_from)
+                            elif sub_type != "BSDF_TRANSPARENT":
+                                base_color_expr = created_expressions.get(sub_from)
 
-        # 2. Fallback: Return the last created expression
-        for expr in reversed(list(created_expressions.values())):
-            if expr:
-                return expr
+                elif from_id in created_expressions:
+                    base_color_expr = created_expressions[from_id]
 
-        return None
+        # Fallback: if no base color found, return the main ColorRamp or first expression
+        if not base_color_expr:
+            for r_id in nodes:
+                if nodes[r_id].get("ir_type") == "COLOR_RAMP" and r_id in created_expressions:
+                    base_color_expr = created_expressions[r_id]
+                    break
+
+        if not base_color_expr:
+            for expr in reversed(list(created_expressions.values())):
+                if expr:
+                    base_color_expr = expr
+                    break
+
+        return base_color_expr, opacity_mask_expr
 
     def _assign_material_to_mesh(self, mesh_asset, material_asset):
         """Assigns the reconstructed material to the imported Static Mesh."""
