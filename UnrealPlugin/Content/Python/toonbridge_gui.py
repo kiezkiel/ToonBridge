@@ -1,11 +1,12 @@
 """
 ToonBridge GUI & Native Windows Dialog Prompts (Unreal Engine 5)
-Uses native Windows Forms file picker (no Tkinter required, zero dependency on embedded Python modules).
+Uses pure Windows ctypes comdlg32 (zero external dependencies, runs natively inside Unreal's embedded Python).
 """
 
 import os
 import sys
-import subprocess
+import ctypes
+from ctypes import wintypes
 from typing import Optional
 
 try:
@@ -21,34 +22,62 @@ if current_dir not in sys.path:
 from toonbridge_importer import ToonBridgeImporter
 
 
+class OPENFILENAME(ctypes.Structure):
+    _fields_ = [
+        ('lStructSize', wintypes.DWORD),
+        ('hwndOwner', wintypes.HWND),
+        ('hInstance', wintypes.HINSTANCE),
+        ('lpstrFilter', wintypes.LPCWSTR),
+        ('lpstrCustomFilter', wintypes.LPWSTR),
+        ('nMaxCustFilter', wintypes.DWORD),
+        ('nFilterIndex', wintypes.DWORD),
+        ('lpstrFile', wintypes.LPWSTR),
+        ('nMaxFile', wintypes.DWORD),
+        ('lpstrFileTitle', wintypes.LPWSTR),
+        ('nMaxFileTitle', wintypes.DWORD),
+        ('lpstrInitialDir', wintypes.LPCWSTR),
+        ('lpstrTitle', wintypes.LPCWSTR),
+        ('Flags', wintypes.DWORD),
+        ('nFileOffset', wintypes.WORD),
+        ('nFileExtension', wintypes.WORD),
+        ('lpstrDefExt', wintypes.LPCWSTR),
+        ('lCustData', wintypes.LPARAM),
+        ('lpfnHook', wintypes.LPVOID),
+        ('lpTemplateName', wintypes.LPCWSTR),
+        ('pvReserved', wintypes.LPVOID),
+        ('dwReserved', wintypes.DWORD),
+        ('FlagsEx', wintypes.DWORD),
+    ]
+
+
 def get_file_path_native() -> str:
-    """Invokes a native Windows File Dialog without needing Tkinter or external Python GUI libraries."""
-    ps_cmd = (
-        "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
-        "$f = New-Object System.Windows.Forms.OpenFileDialog; "
-        "$f.Filter = 'ToonBridge Package (*.toonbridge)|*.toonbridge|All Files (*.*)|*.*'; "
-        "$f.Title = 'Select ToonBridge Package (.toonbridge)'; "
-        "$f.TopMost = $true; "
-        "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Host $f.FileName }"
-    )
-    try:
-        CREATE_NO_WINDOW = 0x08000000
-        result = subprocess.check_output(
-            ["powershell", "-NoProfile", "-Command", ps_cmd],
-            text=True,
-            creationflags=CREATE_NO_WINDOW
-        ).strip()
-        return result
-    except Exception as e:
-        if unreal:
-            unreal.log_warning(f"[ToonBridge] File dialog exception: {e}")
-        return ""
+    """Opens a native Windows OpenFileName dialog via comdlg32."""
+    OFN_EXPLORER = 0x00080000
+    OFN_FILEMUSTEXIST = 0x00001000
+    OFN_PATHMUSTEXIST = 0x00000800
+    OFN_NOCHANGEDIR = 0x00000008
+
+    filter_str = "ToonBridge Package (*.toonbridge)\0*.toonbridge\0All Files (*.*)\0*.*\0\0"
+    buffer = ctypes.create_unicode_buffer(1024)
+
+    ofn = OPENFILENAME()
+    ofn.lStructSize = ctypes.sizeof(OPENFILENAME)
+    ofn.hwndOwner = None
+    ofn.lpstrFilter = filter_str
+    ofn.lpstrFile = ctypes.cast(buffer, wintypes.LPWSTR)
+    ofn.nMaxFile = 1024
+    ofn.lpstrTitle = "Select ToonBridge Package (.toonbridge)"
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
+
+    if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+        return buffer.value
+    return ""
 
 
 def open_import_dialog():
     """Main entry point for importing a .toonbridge package."""
     if unreal:
-        unreal.log("[ToonBridge] Opening native file picker...")
+        unreal.log("[ToonBridge] Opening native file picker dialog...")
 
     file_path = get_file_path_native()
 
